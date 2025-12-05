@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'auth/auth_page.dart';
+import 'pageApp/home.dart';
+
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,7 +26,10 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
         colorSchemeSeed: Colors.blue,
       ),
-      home: const AuthPage(),
+      home: Supabase.instance.client.auth.currentSession != null
+    ? const HomePage()
+    : const AuthPage(),
+
     );
   }
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../pageApp/home.dart';
+
 
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
@@ -31,16 +33,22 @@ class _AuthPageState extends State<AuthPage> {
     try {
       if (_isLogin) {
         // LOGIN
-        final res = await supabase.auth.signInWithPassword(
-          email: email,
-          password: password,
-        );
-        debugPrint('LOGIN SUCCESS => user: ${res.user?.id}, session: ${res.session != null}');
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Login berhasil')),
-        );
-        // TODO: nanti diarahkan ke halaman home mahasiswa
+      final res = await supabase.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+
+      debugPrint('LOGIN SUCCESS => user: ${res.user?.id}, session: ${res.session != null}');
+      if (!mounted) return;
+
+      // REDIRECT KE HOME
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const HomePage(),
+        ),
+      );
+
       } else {
         // SIGN UP / REGISTER
         final res = await supabase.auth.signUp(
