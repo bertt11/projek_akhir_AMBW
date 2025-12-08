@@ -1,5 +1,10 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:http/http.dart' as http;
+
 import 'tambah_tugas_page.dart';
 
 class DaftarTugasPage extends StatefulWidget {
@@ -15,6 +20,10 @@ class _DaftarTugasPageState extends State<DaftarTugasPage> {
   bool _isLoading = true;
   String _selectedFilter = 'Semua';
 
+  // Untuk mencegah kirim email berkali-kali dalam 1 sesi
+  final Set<dynamic> _remindedTaskIds = {};
+  Timer? _reminderTimer;
+
   final List<String> _filterOptions = [
     'Semua', 'Belum Mulai', 'Sedang Dikerjakan', 'Selesai', 'Terlambat'
   ];
@@ -22,15 +31,44 @@ class _DaftarTugasPageState extends State<DaftarTugasPage> {
   @override
   void initState() {
     super.initState();
-    _loadTugas();
+    _loadTugas(checkReminder: true);
+    _startReminderTimer();
   }
 
-  Future<void> _loadTugas() async {
+  @override
+  void dispose() {
+    _reminderTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Timer untuk cek reminder secara berkala (setiap 1 menit)
+  void _startReminderTimer() {
+    _reminderTimer?.cancel();
+    _reminderTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _loadTugas(checkReminder: true),
+    );
+  }
+
+  /// Gabung deadline_date (yyyy-MM-dd) + deadline_time (HH:mm / HH:mm:ss)
+  DateTime _combineDateAndTime(String dateStr, String timeStr) {
+    final date = DateTime.parse(dateStr);
+    final safeTime = timeStr.length >= 5 ? timeStr.substring(0, 5) : '23:59';
+    final parts = safeTime.split(':');
+    final hour = int.parse(parts[0]);
+    final minute = int.parse(parts[1]);
+    return DateTime(date.year, date.month, date.day, hour, minute);
+  }
+
+  Future<void> _loadTugas({bool checkReminder = false}) async {
     setState(() => _isLoading = true);
     
     try {
       final user = _supabase.auth.currentUser;
-      if (user == null) return;
+      if (user == null) {
+        setState(() => _isLoading = false);
+        return;
+      }
 
       final response = await _supabase
           .from('tugas')
@@ -39,10 +77,39 @@ class _DaftarTugasPageState extends State<DaftarTugasPage> {
           .order('deadline_date')
           .order('deadline_time');
 
+      final now = DateTime.now();
+
+      final List<Map<String, dynamic>> loaded = List<Map<String, dynamic>>.from(
+        response,
+      ).map((t) {
+        final deadline = _combineDateAndTime(
+          t['deadline_date'] as String,
+          t['deadline_time'] as String,
+        );
+
+        final reminderMinutes = (t['reminder_minutes_before'] ?? 0) as int;
+        final reminderTime = deadline.subtract(Duration(minutes: reminderMinutes));
+
+        final isReminderActive = reminderMinutes > 0 &&
+            now.isAfter(reminderTime) &&
+            now.isBefore(deadline) &&
+            t['status'] != 'Selesai';
+
+        return {
+          ...t,
+          'deadlineDateTime': deadline,
+          'isReminderActive': isReminderActive,
+        };
+      }).toList();
+
       setState(() {
-        _tugas = List<Map<String, dynamic>>.from(response);
+        _tugas = loaded;
         _isLoading = false;
       });
+
+      if (checkReminder) {
+        _processReminders();
+      }
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
@@ -53,14 +120,117 @@ class _DaftarTugasPageState extends State<DaftarTugasPage> {
     }
   }
 
-  List<Map<String, dynamic>> get _filteredTugas {
-    if (_selectedFilter == 'Semua') {
-      return _tugas;
+  /// Cari tugas yang sudah masuk waktu reminder dan kirim email (sekali per sesi)
+  Future<void> _processReminders() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null || user.email == null) return;
+
+    for (final tugas in _tugas) {
+      final isReminderActive = tugas['isReminderActive'] == true;
+      final id = tugas['id'];
+
+      if (isReminderActive && !_remindedTaskIds.contains(id)) {
+        await _sendEmailReminder(user.email!, tugas);
+        _remindedTaskIds.add(id);
+      }
     }
-    return _tugas.where((tugas) => tugas['status'] == _selectedFilter).toList();
   }
 
-  Future<void> _updateStatus(String tugasId, String newStatus) async {
+  /// Kirim email reminder via EmailJS (demo only)
+  Future<void> _sendEmailReminder(String toEmail, Map<String, dynamic> tugas) async {
+
+    const serviceId = 'service_fnz4rb8';
+    const templateId = 'template_x50dax9';
+    const publicKey = 'slzHNXp4uaAde0FgA';
+
+    final url = Uri.parse('https://api.emailjs.com/api/v1.0/email/send');
+
+    final deadlineStr =
+        '${tugas['deadline_date']} ${tugas['deadline_time'].toString().substring(0, 5)}';
+
+    try {
+      final response = await http.post(
+        url,
+        headers: {
+          'origin': 'http://localhost', // atau origin web kamu
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'service_id': serviceId,
+          'template_id': templateId,
+          'user_id': publicKey,
+          'template_params': {
+            // sesuaikan dengan template EmailJS kamu
+            'to_email': toEmail,
+            'task_name': tugas['nama_tugas'],
+            'task_deadline': deadlineStr,
+            'task_priority': tugas['prioritas'] ?? '-',
+          },
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Email reminder dikirim untuk "${tugas['nama_tugas']}"'),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Gagal kirim email reminder (${response.statusCode})',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error kirim email reminder: $e'),
+          ),
+        );
+      }
+    }
+  }
+
+  List<Map<String, dynamic>> get _filteredTugas {
+    List<Map<String, dynamic>> list;
+
+    if (_selectedFilter == 'Semua') {
+      list = List<Map<String, dynamic>>.from(_tugas);
+    } else {
+      list = _tugas.where((tugas) => tugas['status'] == _selectedFilter).toList();
+    }
+
+    // Urutkan:
+    // 1) yang isReminderActive = true di atas
+    // 2) berdasarkan deadline paling cepat
+    list.sort((a, b) {
+      final aReminder = (a['isReminderActive'] ?? false) ? 1 : 0;
+      final bReminder = (b['isReminderActive'] ?? false) ? 1 : 0;
+
+      if (aReminder != bReminder) {
+        return bReminder - aReminder;
+      }
+
+      final aDeadline = (a['deadlineDateTime'] as DateTime?) ??
+          _combineDateAndTime(a['deadline_date'], a['deadline_time']);
+      final bDeadline = (b['deadlineDateTime'] as DateTime?) ??
+          _combineDateAndTime(b['deadline_date'], b['deadline_time']);
+
+      return aDeadline.compareTo(bDeadline);
+    });
+
+    return list;
+  }
+
+  Future<void> _updateStatus(dynamic tugasId, String newStatus) async {
     try {
       await _supabase
           .from('tugas')
@@ -157,7 +327,7 @@ class _DaftarTugasPageState extends State<DaftarTugasPage> {
                       MaterialPageRoute(
                         builder: (context) => const TambahTugasPage(),
                       ),
-                    ).then((_) => _loadTugas());
+                    ).then((_) => _loadTugas(checkReminder: true));
                   },
                   icon: const Icon(Icons.add),
                   label: const Text('Tambah'),
@@ -194,143 +364,179 @@ class _DaftarTugasPageState extends State<DaftarTugasPage> {
                         ),
                       )
                     : RefreshIndicator(
-                        onRefresh: _loadTugas,
+                        onRefresh: () => _loadTugas(checkReminder: true),
                         child: ListView.builder(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           itemCount: _filteredTugas.length,
                           itemBuilder: (context, index) {
                             final tugas = _filteredTugas[index];
-                            final isOverdue = DateTime.parse(tugas['deadline_date'])
-                                .isBefore(DateTime.now()) && tugas['status'] != 'Selesai';
+
+                            final deadline = (tugas['deadlineDateTime'] as DateTime?) ??
+                                _combineDateAndTime(
+                                  tugas['deadline_date'] as String,
+                                  tugas['deadline_time'] as String,
+                                );
+
+                            final isOverdue = deadline.isBefore(DateTime.now()) &&
+                                tugas['status'] != 'Selesai';
+
+                            final isReminderActive = tugas['isReminderActive'] == true;
+                            final isCompleted = tugas['status'] == 'Selesai';
                             
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              child: InkWell(
-                                onTap: () => _showTugasDetail(tugas),
-                                borderRadius: BorderRadius.circular(8),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      // Header
-                                      Row(
-                                        children: [
-                                          Container(
-                                            width: 4,
-                                            height: 40,
-                                            decoration: BoxDecoration(
-                                              color: _getPriorityColor(tugas['prioritas']),
-                                              borderRadius: BorderRadius.circular(2),
+                            return Opacity(
+                              opacity: isCompleted ? 0.4 : 1.0,
+                              child: Card(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                child: InkWell(
+                                  onTap: () => _showTugasDetail(tugas),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        // Header
+                                        Row(
+                                          children: [
+                                            Container(
+                                              width: 4,
+                                              height: 40,
+                                              decoration: BoxDecoration(
+                                                color: _getPriorityColor(tugas['prioritas']),
+                                                borderRadius: BorderRadius.circular(2),
+                                              ),
                                             ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  tugas['nama_tugas'],
-                                                  style: const TextStyle(
-                                                    fontSize: 16,
-                                                    fontWeight: FontWeight.bold,
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    tugas['nama_tugas'],
+                                                    style: const TextStyle(
+                                                      fontSize: 16,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
                                                   ),
-                                                ),
-                                                const SizedBox(height: 4),
-                                                Row(
-                                                  children: [
-                                                    Container(
-                                                      padding: const EdgeInsets.symmetric(
-                                                        horizontal: 8, vertical: 4),
-                                                      decoration: BoxDecoration(
-                                                        color: _getPriorityColor(tugas['prioritas']),
-                                                        borderRadius: BorderRadius.circular(12),
-                                                      ),
-                                                      child: Text(
-                                                        tugas['prioritas'],
-                                                        style: const TextStyle(
-                                                          color: Colors.white,
-                                                          fontSize: 10,
-                                                          fontWeight: FontWeight.w500,
+                                                  const SizedBox(height: 4),
+                                                  Row(
+                                                    children: [
+                                                      Container(
+                                                        padding: const EdgeInsets.symmetric(
+                                                          horizontal: 8, vertical: 4),
+                                                        decoration: BoxDecoration(
+                                                          color: _getPriorityColor(tugas['prioritas']),
+                                                          borderRadius: BorderRadius.circular(12),
+                                                        ),
+                                                        child: Text(
+                                                          tugas['prioritas'],
+                                                          style: const TextStyle(
+                                                            color: Colors.white,
+                                                            fontSize: 10,
+                                                            fontWeight: FontWeight.w500,
+                                                          ),
                                                         ),
                                                       ),
-                                                    ),
-                                                    const SizedBox(width: 8),
-                                                    Text(
-                                                      tugas['jenis_tugas'],
-                                                      style: TextStyle(
-                                                        color: Colors.grey[600],
-                                                        fontSize: 12,
+                                                      const SizedBox(width: 8),
+                                                      Text(
+                                                        tugas['jenis_tugas'],
+                                                        style: TextStyle(
+                                                          color: Colors.grey[600],
+                                                          fontSize: 12,
+                                                        ),
                                                       ),
-                                                    ),
-                                                  ],
+
+                                                      if (isReminderActive) ...[
+                                                        const SizedBox(width: 8),
+                                                        Container(
+                                                          padding: const EdgeInsets.symmetric(
+                                                            horizontal: 6,
+                                                            vertical: 2,
+                                                          ),
+                                                          decoration: BoxDecoration(
+                                                            color: Colors.red[50],
+                                                            borderRadius: BorderRadius.circular(8),
+                                                            border: Border.all(color: Colors.red),
+                                                          ),
+                                                          child: const Text(
+                                                            'REMINDER',
+                                                            style: TextStyle(
+                                                              fontSize: 10,
+                                                              fontWeight: FontWeight.bold,
+                                                              color: Colors.red,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ],
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 8, vertical: 4),
+                                              decoration: BoxDecoration(
+                                                color: _getStatusColor(tugas['status']),
+                                                borderRadius: BorderRadius.circular(12),
+                                              ),
+                                              child: Text(
+                                                tugas['status'],
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w500,
                                                 ),
-                                              ],
-                                            ),
-                                          ),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 4),
-                                            decoration: BoxDecoration(
-                                              color: _getStatusColor(tugas['status']),
-                                              borderRadius: BorderRadius.circular(12),
-                                            ),
-                                            child: Text(
-                                              tugas['status'],
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.w500,
                                               ),
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 12),
-                                      
-                                      // Deadline Info
-                                      Container(
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: isOverdue ? Colors.red[50] : Colors.blue[50],
-                                          borderRadius: BorderRadius.circular(8),
+                                          ],
                                         ),
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              Icons.schedule,
-                                              size: 16,
-                                              color: isOverdue ? Colors.red : Colors.blue,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Text(
-                                              'Deadline: ${_formatDate(tugas['deadline_date'])} ${tugas['deadline_time'].substring(0, 5)}',
-                                              style: TextStyle(
-                                                color: isOverdue ? Colors.red[700] : Colors.blue[700],
-                                                fontWeight: FontWeight.w500,
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                            if (tugas['matakuliah'] != null) ...[
-                                              const Spacer(),
+                                        const SizedBox(height: 12),
+                                        
+                                        // Deadline Info
+                                        Container(
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: isOverdue ? Colors.red[50] : Colors.blue[50],
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: Row(
+                                            children: [
                                               Icon(
-                                                Icons.book,
-                                                size: 14,
-                                                color: Colors.grey[500],
+                                                Icons.schedule,
+                                                size: 16,
+                                                color: isOverdue ? Colors.red : Colors.blue,
                                               ),
-                                              const SizedBox(width: 4),
+                                              const SizedBox(width: 8),
                                               Text(
-                                                tugas['matakuliah']['kode_matkul'],
+                                                'Deadline: ${_formatDate(tugas['deadline_date'])} ${tugas['deadline_time'].substring(0, 5)}',
                                                 style: TextStyle(
-                                                  color: Colors.grey[600],
+                                                  color: isOverdue ? Colors.red[700] : Colors.blue[700],
+                                                  fontWeight: FontWeight.w500,
                                                   fontSize: 12,
                                                 ),
                                               ),
+                                              if (tugas['matakuliah'] != null) ...[
+                                                const Spacer(),
+                                                Icon(
+                                                  Icons.book,
+                                                  size: 14,
+                                                  color: Colors.grey[500],
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  tugas['matakuliah']['kode_matkul'],
+                                                  style: TextStyle(
+                                                    color: Colors.grey[600],
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ],
                                             ],
-                                          ],
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
@@ -403,7 +609,7 @@ class _DaftarTugasPageState extends State<DaftarTugasPage> {
               const SizedBox(height: 16),
               
               // Detail Info
-              if (tugas['deskripsi'] != null && tugas['deskripsi'].isNotEmpty) ...[
+              if (tugas['deskripsi'] != null && tugas['deskripsi'].toString().isNotEmpty) ...[
                 const Text(
                   'Deskripsi:',
                   style: TextStyle(fontWeight: FontWeight.w600),
@@ -413,7 +619,7 @@ class _DaftarTugasPageState extends State<DaftarTugasPage> {
                 const SizedBox(height: 16),
               ],
               
-              if (tugas['catatan'] != null && tugas['catatan'].isNotEmpty) ...[
+              if (tugas['catatan'] != null && tugas['catatan'].toString().isNotEmpty) ...[
                 const Text(
                   'Catatan:',
                   style: TextStyle(fontWeight: FontWeight.w600),

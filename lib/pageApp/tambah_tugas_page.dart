@@ -32,6 +32,17 @@ class _TambahTugasPageState extends State<TambahTugasPage> {
     'Rendah', 'Sedang', 'Tinggi', 'Urgent'
   ];
 
+  // 🔔 Reminder
+  int _selectedReminderMinutes = 60; // default 1 jam sebelum
+  final List<Map<String, dynamic>> _reminderOptions = [
+    {'label': 'Tidak usah reminder', 'value': 0},
+    {'label': '5 menit sebelum', 'value': 5},
+    {'label': '15 menit sebelum', 'value': 15},
+    {'label': '30 menit sebelum', 'value': 30},
+    {'label': '1 jam sebelum', 'value': 60},
+    {'label': '1 hari sebelum', 'value': 24 * 60},
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -110,6 +121,7 @@ class _TambahTugasPageState extends State<TambahTugasPage> {
         'deadline_time': _formatTime(_selectedTime),
         'prioritas': _selectedPrioritas,
         'catatan': _catatanController.text.trim(),
+        'reminder_minutes_before': _selectedReminderMinutes, // ⬅️ simpan reminder
       });
 
       if (!mounted) return;
@@ -132,6 +144,7 @@ class _TambahTugasPageState extends State<TambahTugasPage> {
         _selectedPrioritas = 'Sedang';
         _selectedDate = DateTime.now().add(const Duration(days: 1));
         _selectedTime = const TimeOfDay(hour: 23, minute: 59);
+        _selectedReminderMinutes = 60; // reset ke default
       });
 
     } catch (e) {
@@ -168,182 +181,203 @@ class _TambahTugasPageState extends State<TambahTugasPage> {
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Nama Tugas
-              TextFormField(
-                controller: _namaTugasController,
-                decoration: const InputDecoration(
-                  labelText: 'Nama Tugas *',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.assignment),
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Nama tugas tidak boleh kosong';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // Matakuliah
-              DropdownButtonFormField<String>(
-                value: _selectedMatakuliahId,
-                decoration: const InputDecoration(
-                  labelText: 'Matakuliah',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.book),
-                ),
-                items: [
-                  const DropdownMenuItem<String>(
-                    value: null,
-                    child: Text('Pilih Matakuliah (Opsional)'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Nama Tugas
+                TextFormField(
+                  controller: _namaTugasController,
+                  decoration: const InputDecoration(
+                    labelText: 'Nama Tugas *',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.assignment),
                   ),
-                  ..._matakuliahList.map((mk) {
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Nama tugas tidak boleh kosong';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                // Matakuliah
+                DropdownButtonFormField<String>(
+                  value: _selectedMatakuliahId,
+                  decoration: const InputDecoration(
+                    labelText: 'Matakuliah',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.book),
+                  ),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: null,
+                      child: Text('Pilih Matakuliah (Opsional)'),
+                    ),
+                    ..._matakuliahList.map((mk) {
+                      return DropdownMenuItem<String>(
+                        value: mk['id'],
+                        child: Text('${mk['kode_matkul']} - ${mk['nama_matkul']}'),
+                      );
+                    }),
+                  ],
+                  onChanged: (String? newValue) {
+                    setState(() => _selectedMatakuliahId = newValue);
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                // Jenis Tugas
+                DropdownButtonFormField<String>(
+                  value: _selectedJenisTugas,
+                  decoration: const InputDecoration(
+                    labelText: 'Jenis Tugas *',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.category),
+                  ),
+                  items: _jenisTugasList.map((jenis) {
                     return DropdownMenuItem<String>(
-                      value: mk['id'],
-                      child: Text('${mk['kode_matkul']} - ${mk['nama_matkul']}'),
+                      value: jenis,
+                      child: Text(jenis),
                     );
-                  }),
-                ],
-                onChanged: (String? newValue) {
-                  setState(() => _selectedMatakuliahId = newValue);
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // Jenis Tugas
-              DropdownButtonFormField<String>(
-                value: _selectedJenisTugas,
-                decoration: const InputDecoration(
-                  labelText: 'Jenis Tugas *',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.category),
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    setState(() => _selectedJenisTugas = newValue!);
+                  },
                 ),
-                items: _jenisTugasList.map((jenis) {
-                  return DropdownMenuItem<String>(
-                    value: jenis,
-                    child: Text(jenis),
-                  );
-                }).toList(),
-                onChanged: (String? newValue) {
-                  setState(() => _selectedJenisTugas = newValue!);
-                },
-              ),
-              const SizedBox(height: 16),
+                const SizedBox(height: 16),
 
-              // Deadline Date & Time
-              Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: _selectDate,
-                      child: InputDecorator(
-                        decoration: const InputDecoration(
-                          labelText: 'Tanggal Deadline *',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.calendar_today),
+                // Deadline Date & Time
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: _selectDate,
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Tanggal Deadline *',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.calendar_today),
+                          ),
+                          child: Text(_formatDate(_selectedDate)),
                         ),
-                        child: Text(_formatDate(_selectedDate)),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: InkWell(
-                      onTap: _selectTime,
-                      child: InputDecorator(
-                        decoration: const InputDecoration(
-                          labelText: 'Jam Deadline *',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.access_time),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: InkWell(
+                        onTap: _selectTime,
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Jam Deadline *',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.access_time),
+                          ),
+                          child: Text(_formatTime(_selectedTime)),
                         ),
-                        child: Text(_formatTime(_selectedTime)),
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // Prioritas
-              DropdownButtonFormField<String>(
-                value: _selectedPrioritas,
-                decoration: const InputDecoration(
-                  labelText: 'Prioritas *',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.flag),
+                  ],
                 ),
-                items: _prioritasList.map((prioritas) {
-                  return DropdownMenuItem<String>(
-                    value: prioritas,
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.circle,
-                          size: 12,
-                          color: _getPriorityColor(prioritas),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(prioritas),
-                      ],
+                const SizedBox(height: 16),
+
+                // Prioritas
+                DropdownButtonFormField<String>(
+                  value: _selectedPrioritas,
+                  decoration: const InputDecoration(
+                    labelText: 'Prioritas *',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.flag),
+                  ),
+                  items: _prioritasList.map((prioritas) {
+                    return DropdownMenuItem<String>(
+                      value: prioritas,
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.circle,
+                            size: 12,
+                            color: _getPriorityColor(prioritas),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(prioritas),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    setState(() => _selectedPrioritas = newValue!);
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                // 🔔 Reminder sebelum deadline
+                DropdownButtonFormField<int>(
+                  value: _selectedReminderMinutes,
+                  decoration: const InputDecoration(
+                    labelText: 'Reminder sebelum deadline',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.notifications_active),
+                  ),
+                  items: _reminderOptions.map((option) {
+                    return DropdownMenuItem<int>(
+                      value: option['value'] as int,
+                      child: Text(option['label'] as String),
+                    );
+                  }).toList(),
+                  onChanged: (int? newValue) {
+                    if (newValue == null) return;
+                    setState(() => _selectedReminderMinutes = newValue);
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                // Deskripsi
+                TextFormField(
+                  controller: _deskripsiController,
+                  decoration: const InputDecoration(
+                    labelText: 'Deskripsi Tugas',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.description),
+                  ),
+                  maxLines: 3,
+                ),
+                const SizedBox(height: 16),
+
+                // Catatan
+                TextFormField(
+                  controller: _catatanController,
+                  decoration: const InputDecoration(
+                    labelText: 'Catatan Tambahan',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.note),
+                  ),
+                  maxLines: 2,
+                ),
+                const SizedBox(height: 24),
+
+                // Button Simpan
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _simpanTugas,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
-                  );
-                }).toList(),
-                onChanged: (String? newValue) {
-                  setState(() => _selectedPrioritas = newValue!);
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // Deskripsi
-              TextFormField(
-                controller: _deskripsiController,
-                decoration: const InputDecoration(
-                  labelText: 'Deskripsi Tugas',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.description),
-                ),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 16),
-
-              // Catatan
-              TextFormField(
-                controller: _catatanController,
-                decoration: const InputDecoration(
-                  labelText: 'Catatan Tambahan',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.note),
-                ),
-                maxLines: 2,
-              ),
-              const SizedBox(height: 24),
-
-              // Button Simpan
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _simpanTugas,
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text(
+                            'Simpan Tugas',
+                            style: TextStyle(fontSize: 16),
+                          ),
                   ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text(
-                          'Simpan Tugas',
-                          style: TextStyle(fontSize: 16),
-                        ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
           ),
         ),
       ),
