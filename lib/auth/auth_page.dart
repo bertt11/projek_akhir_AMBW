@@ -59,12 +59,25 @@ class _AuthPageState extends State<AuthPage> {
           },
         );
         debugPrint('SIGNUP SUCCESS => user: ${res.user?.id}');
+        
+        // Sign out setelah registrasi untuk mencegah auto-login
+        await supabase.auth.signOut();
+        
         if (!mounted) return;
+        
+        // Beralih ke mode login setelah registrasi berhasil
+        setState(() {
+          _isLogin = true;
+          _emailController.clear();
+          _passwordController.clear();
+        });
+        
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Registrasi berhasil, cek email untuk verifikasi (jika diaktifkan)',
+              'Registrasi berhasil! Silakan login dengan akun yang baru dibuat.',
             ),
+            duration: Duration(seconds: 4),
           ),
         );
       }
