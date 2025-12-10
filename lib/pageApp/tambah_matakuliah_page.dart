@@ -47,14 +47,73 @@ class _TambahMatakuliahPageState extends State<TambahMatakuliahPage> {
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
+  Future<bool> _checkTimeConflict() async {
+    try {
+      final user = _supabase.auth.currentUser;
+      if (user == null) return false;
+
+      // Ambil semua matakuliah di hari yang sama
+      final existingMatkul = await _supabase
+          .from('matakuliah')
+          .select('jam_mulai, jam_selesai')
+          .eq('user_id', user.id)
+          .eq('hari', _selectedHari);
+
+      final newStart = _jamMulai.hour * 60 + _jamMulai.minute;
+      final newEnd = _jamSelesai.hour * 60 + _jamSelesai.minute;
+
+      for (var matkul in existingMatkul) {
+        final existingStart = _timeStringToMinutes(matkul['jam_mulai']);
+        final existingEnd = _timeStringToMinutes(matkul['jam_selesai']);
+
+        // Cek apakah ada overlap waktu
+        if (newStart < existingEnd && newEnd > existingStart) {
+          return true; // Ada bentrok
+        }
+      }
+      return false; // Tidak ada bentrok
+    } catch (e) {
+      return false;
+    }
+  }
+
+  int _timeStringToMinutes(String timeString) {
+    final parts = timeString.split(':');
+    return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+  }
+
   Future<void> _simpanMatakuliah() async {
     if (!_formKey.currentState!.validate()) return;
+
+    // Validasi waktu mulai harus sebelum waktu selesai
+    if (_jamMulai.hour > _jamSelesai.hour || 
+        (_jamMulai.hour == _jamSelesai.hour && _jamMulai.minute >= _jamSelesai.minute)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Jam mulai harus sebelum jam selesai!'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
     setState(() => _isLoading = true);
 
     try {
       final user = _supabase.auth.currentUser;
       if (user == null) throw 'User tidak ditemukan';
+
+      // Cek bentrok waktu dengan matakuliah yang sudah ada
+      final isConflict = await _checkTimeConflict();
+      if (isConflict) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Waktu bentrok dengan matakuliah lain di hari yang sama!'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
 
       await _supabase.from('matakuliah').insert({
         'user_id': user.id,
