@@ -81,6 +81,8 @@ class _TambahTugasPageState extends State<TambahTugasPage> {
     );
     if (picked != null) {
       setState(() => _selectedDate = picked);
+      // Validasi jika tanggal hari ini, pastikan waktu tidak di masa lalu
+      _validateDateTime();
     }
   }
 
@@ -91,6 +93,35 @@ class _TambahTugasPageState extends State<TambahTugasPage> {
     );
     if (picked != null) {
       setState(() => _selectedTime = picked);
+      // Validasi jika tanggal hari ini, pastikan waktu tidak di masa lalu
+      _validateDateTime();
+    }
+  }
+
+  void _validateDateTime() {
+    final now = DateTime.now();
+    final selectedDateTime = DateTime(
+      _selectedDate.year,
+      _selectedDate.month,
+      _selectedDate.day,
+      _selectedTime.hour,
+      _selectedTime.minute,
+    );
+
+    // Jika deadline di masa lalu, set ke waktu minimal (sekarang + 1 menit)
+    if (selectedDateTime.isBefore(now)) {
+      final minDateTime = now.add(const Duration(minutes: 1));
+      setState(() {
+        _selectedDate = DateTime(minDateTime.year, minDateTime.month, minDateTime.day);
+        _selectedTime = TimeOfDay(hour: minDateTime.hour, minute: minDateTime.minute);
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Deadline tidak boleh di masa lalu. Waktu telah disesuaikan.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
     }
   }
 
@@ -104,6 +135,26 @@ class _TambahTugasPageState extends State<TambahTugasPage> {
 
   Future<void> _simpanTugas() async {
     if (!_formKey.currentState!.validate()) return;
+
+    // Validasi deadline tidak boleh di masa lalu
+    final now = DateTime.now();
+    final selectedDateTime = DateTime(
+      _selectedDate.year,
+      _selectedDate.month,
+      _selectedDate.day,
+      _selectedTime.hour,
+      _selectedTime.minute,
+    );
+
+    if (selectedDateTime.isBefore(now)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Deadline tidak boleh di masa lalu!'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
     setState(() => _isLoading = true);
 
