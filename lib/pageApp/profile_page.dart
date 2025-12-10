@@ -115,8 +115,8 @@ class _ProfilePageState extends State<ProfilePage> {
         _profileImageUrl = imageUrl;
       });
 
-      // Update profile dengan URL gambar baru
-      await _saveProfile();
+      // Update profile dengan URL gambar baru tanpa menampilkan alert
+      await _updateProfileImageOnly();
 
     } catch (e) {
       if (mounted) {
@@ -126,6 +126,39 @@ class _ProfilePageState extends State<ProfilePage> {
       }
     } finally {
       setState(() => _isUploading = false);
+    }
+  }
+
+  Future<void> _updateProfileImageOnly() async {
+    try {
+      final user = _supabase.auth.currentUser;
+      if (user == null) throw 'User not found';
+
+      // Cek apakah profile sudah ada
+      final existingProfile = await _supabase
+          .from('profiles')
+          .select('id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+      if (existingProfile != null) {
+        // Update hanya URL gambar
+        await _supabase
+            .from('profiles')
+            .update({'profile_image_url': _profileImageUrl})
+            .eq('user_id', user.id);
+      } else {
+        // Insert profile baru dengan data minimal
+        await _supabase
+            .from('profiles')
+            .insert({
+              'user_id': user.id,
+              'profile_image_url': _profileImageUrl,
+            });
+      }
+    } catch (e) {
+      // Silent error untuk update gambar saja
+      debugPrint('Error updating profile image: $e');
     }
   }
 
@@ -171,7 +204,7 @@ class _ProfilePageState extends State<ProfilePage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Profile berhasil disimpan!'),
+            content: Text('Data berhasil disimpan!'),
             backgroundColor: Colors.green,
           ),
         );
