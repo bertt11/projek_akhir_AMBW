@@ -12,7 +12,6 @@ class HomeContent extends StatefulWidget {
 class _HomeContentState extends State<HomeContent> {
   final _supabase = Supabase.instance.client;
   List<Map<String, dynamic>> _matakuliah = [];
-  List<Map<String, dynamic>> _tugas = [];
   Map<String, dynamic>? _userProfile;
   bool _isLoading = true;
 
@@ -32,7 +31,7 @@ class _HomeContentState extends State<HomeContent> {
   }
 
   Future<void> _loadData() async {
-    await Future.wait([_loadMatakuliah(), _loadTugas(), _loadUserProfile()]);
+    await Future.wait([_loadMatakuliah(), _loadUserProfile()]);
   }
 
   Future<void> _loadUserProfile() async {
@@ -79,29 +78,7 @@ class _HomeContentState extends State<HomeContent> {
     }
   }
 
-  Future<void> _loadTugas() async {
-    try {
-      final user = _supabase.auth.currentUser;
-      if (user == null) return;
 
-      final response = await _supabase
-          .from('tugas')
-          .select('*, matakuliah(nama_matkul, kode_matkul)')
-          .eq('user_id', user.id)
-          .order('deadline_date')
-          .order('deadline_time');
-
-      setState(() {
-        _tugas = List<Map<String, dynamic>>.from(response);
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error loading tugas: $e')));
-      }
-    }
-  }
 
   List<Map<String, dynamic>> _getMatakuliahByHari(String hari) {
     final matkulHari = _matakuliah.where((mk) => mk['hari'] == hari).toList();
@@ -109,38 +86,15 @@ class _HomeContentState extends State<HomeContent> {
     return matkulHari;
   }
 
-  List<Map<String, dynamic>> _getTugasByDate(DateTime date) {
-    final dateStr = date.toIso8601String().split('T')[0];
-    return _tugas.where((tugas) => tugas['deadline_date'] == dateStr).toList();
-  }
 
-  DateTime _getDateForHari(String hari) {
-    final today = DateTime.now();
-    final currentWeekday = today.weekday;
-    final hariMap = {
-      'Senin': 1,
-      'Selasa': 2,
-      'Rabu': 3,
-      'Kamis': 4,
-      'Jumat': 5,
-      'Sabtu': 6,
-    };
 
-    final targetWeekday = hariMap[hari]!;
-    final daysToAdd = (targetWeekday - currentWeekday) % 7;
-    return today.add(Duration(days: daysToAdd));
-  }
 
-  String _buildSubtitleText(int matkulCount, int tugasCount) {
-    if (matkulCount == 0 && tugasCount == 0) {
+
+  String _buildSubtitleText(int matkulCount) {
+    if (matkulCount == 0) {
       return 'Tidak ada jadwal';
     }
-
-    List<String> parts = [];
-    if (matkulCount > 0) parts.add('$matkulCount kuliah');
-    if (tugasCount > 0) parts.add('$tugasCount tugas');
-
-    return parts.join(' • ');
+    return '$matkulCount kuliah';
   }
 
   String _formatTime(String time) {
@@ -229,7 +183,7 @@ class _HomeContentState extends State<HomeContent> {
                   child: CircularProgressIndicator(),
                 ),
               )
-            else if (_matakuliah.isEmpty && _tugas.isEmpty)
+            else if (_matakuliah.isEmpty)
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
@@ -238,12 +192,12 @@ class _HomeContentState extends State<HomeContent> {
                       Icon(Icons.schedule, size: 48, color: Colors.grey[400]),
                       const SizedBox(height: 12),
                       Text(
-                        'Belum ada jadwal & tugas',
+                        'Belum ada jadwal kuliah',
                         style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Tambahkan matakuliah dan tugas di tab yang tersedia',
+                        'Tambahkan matakuliah di tab Matakuliah',
                         style: TextStyle(fontSize: 12, color: Colors.grey[500]),
                         textAlign: TextAlign.center,
                       ),
@@ -255,8 +209,6 @@ class _HomeContentState extends State<HomeContent> {
               Column(
                 children: _hariList.map((hari) {
                   final matkulHari = _getMatakuliahByHari(hari);
-                  final dateForHari = _getDateForHari(hari);
-                  final tugasHari = _getTugasByDate(dateForHari);
                   final isToday = _isToday(hari);
 
                   return Card(
@@ -273,10 +225,10 @@ class _HomeContentState extends State<HomeContent> {
                         ),
                       ),
                       subtitle: Text(
-                        _buildSubtitleText(matkulHari.length, tugasHari.length),
+                        _buildSubtitleText(matkulHari.length),
                         style: TextStyle(color: Colors.grey[600], fontSize: 12),
                       ),
-                      children: _buildDayChildren(matkulHari, tugasHari),
+                      children: _buildDayChildren(matkulHari),
                     ),
                   );
                 }).toList(),
@@ -289,7 +241,6 @@ class _HomeContentState extends State<HomeContent> {
 
   List<Widget> _buildDayChildren(
     List<Map<String, dynamic>> matkulHari,
-    List<Map<String, dynamic>> tugasHari,
   ) {
     List<Widget> children = [];
 
@@ -365,114 +316,12 @@ class _HomeContentState extends State<HomeContent> {
       );
     }
 
-    // Add tugas
-    for (var tugas in tugasHari) {
-      children.add(
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.orange[50],
-            borderRadius: BorderRadius.circular(8),
-            border: Border(
-              left: BorderSide(
-                width: 4,
-                color: _getPriorityColor(tugas['prioritas']),
-              ),
-            ),
-          ),
-          child: ListTile(
-            leading: Icon(
-              Icons.assignment,
-              color: Colors.orange[700],
-              size: 20,
-            ),
-            title: Text(
-              tugas['nama_tugas'],
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: Colors.orange[800],
-              ),
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _getPriorityColor(tugas['prioritas']),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        tugas['prioritas'],
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      tugas['jenis_tugas'],
-                      style: TextStyle(color: Colors.grey[600], fontSize: 11),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Icon(Icons.access_time, size: 14, color: Colors.red[600]),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Deadline: ${tugas['deadline_time'].substring(0, 5)}',
-                      style: TextStyle(
-                        color: Colors.red[600],
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-                if (tugas['matakuliah'] != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Row(
-                      children: [
-                        Icon(Icons.book, size: 14, color: Colors.grey[500]),
-                        const SizedBox(width: 4),
-                        Text(
-                          tugas['matakuliah']['kode_matkul'],
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 8,
-            ),
-          ),
-        ),
-      );
-    }
-
     if (children.isEmpty) {
       children.add(
         Padding(
           padding: const EdgeInsets.all(16),
           child: Text(
-            'Tidak ada jadwal atau tugas',
+            'Tidak ada jadwal kuliah',
             style: TextStyle(
               color: Colors.grey[500],
               fontStyle: FontStyle.italic,
@@ -485,20 +334,7 @@ class _HomeContentState extends State<HomeContent> {
     return children;
   }
 
-  Color _getPriorityColor(String prioritas) {
-    switch (prioritas) {
-      case 'Rendah':
-        return Colors.green;
-      case 'Sedang':
-        return Colors.orange;
-      case 'Tinggi':
-        return Colors.red;
-      case 'Urgent':
-        return Colors.purple;
-      default:
-        return Colors.grey;
-    }
-  }
+
 
   bool _isToday(String hari) {
     final today = DateTime.now().weekday;
